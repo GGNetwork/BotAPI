@@ -172,7 +172,7 @@ class PushConnection
         $data = self::$authorization[$this->botGGNumber]->getServerAndToken();
         $result = $this->executeCurl([
             CURLOPT_URL => 'https://'.$data['server'].'/setStatus/'.$this->botGGNumber,
-            CURLOPT_POSTFIELDS => "status=$h&desc=".urlencode($description),
+            CURLOPT_POSTFIELDS => "status=$h&desc=".urlencode($description ?? ''),
             CURLOPT_HTTPHEADER => [
                 'BotApi-Version: '.MessageBuilder::BOTAPI_VERSION,
                 'Token: '.$data['token']
