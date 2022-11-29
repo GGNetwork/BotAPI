@@ -1,0 +1,12 @@
+application: IdentyfikatorAplikacji
+version: 1
+runtime: python
+api_version: 1
+
+handlers:
+- url: /botggafc1248b\.html
+  static_files: botggafc1248b.html
+  upload: botggafc1248b\.html
+  
+- url: /.*
+  script: main.py

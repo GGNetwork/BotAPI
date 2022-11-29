@@ -3,7 +3,7 @@
 
 '''
 Biblioteka implementująca BotAPI GG http://boty.gg.pl/
-Copyright (C) 2011 GG Network S.A. Marcin Bagiński <m.baginski@gadu-gadu.pl>
+Copyright (C) 2013 GG Network S.A. Marcin Bagiński <marcin.baginski@firma.gg.pl>
 
 This library is free software: you can redistribute it and/or modify
 it under the terms of the GNU Lesser General Public License as published by
@@ -23,7 +23,6 @@ import re
 import urllib2
 import base64
 import urllib
-from django.utils import simplejson as json
 from MessageBuilder import *
 from xml.etree import ElementTree
 
@@ -33,32 +32,48 @@ STATUS_FFC='ffc'
 STATUS_BACK='back'
 STATUS_DND='dnd'
 STATUS_INVISIBLE='invisible'
-
+BOTAPI_VERSION='GGBotApi-2.4-PYTHON'
 
 class PushConnection:
 	''' Klasa reprezentująca połączenie PUSH z BotMasterem.
 	Autoryzuje połączenie w trakcie tworzenia i wysyła wiadomości do BotMastera. '''
 	URL_MESSAGE='https://%s/sendMessage/%d'
 	URL_STATUS='https://%s/setStatus/%d'
-	URL_USERBARS='https://botapi.gadu-gadu.pl/botmaster/getUserbars/%d'
+	URL_IMG='https://botapi.gadu-gadu.pl/botmaster/%sImage/%d'
+	URL_ISBOT='https://botapi.gadu-gadu.pl/botmaster/isBot/%d'
+
+	lastAuthorization=None
+	lastGg=None
 
 
-	def __init__(self, ggid, userName, password):
+	def __init__(self, ggid=None, userName=None, password=None):
 		''' Konstruktor PushConnection - przeprowadza autoryzację
 
 		ggid to numer GG bota.
 		userName to login platformy BotAPI.
 		password hasło do platformy BotAPI.'''
-		self.authorization=BotAPIAuthorization(ggid, userName, password)
-		self.gg=ggid
 
 
-	def __push(self, parmdictb, offline, image):
+		if ((PushConnection.lastAuthorization is None) or (PushConnection.lastAuthorization.isAuthorized()==False) or (ggid!=PushConnection.lastGg and ggid is not None)):
+			if ((userName is None) and (self.BOTAPI_LOGIN is not None)):
+				userName = self.BOTAPI_LOGIN
+			if ((password is None) and (self.BOTAPI_PASSWORD is not None)):
+				password = self.BOTAPI_PASSWORD
+
+			PushConnection.lastAuthorization=BotAPIAuthorization(ggid, userName, password)
+			PushConnection.lastGg=ggid
+
+
+		self.gg=PushConnection.lastGg
+		self.authorization=PushConnection.lastAuthorization
+
+
+	def __push(self, parmdictb, offline):
 		data=self.authorization.getServerAndToken()
 		request=urllib2.Request(PushConnection.URL_MESSAGE % (data[1], self.gg))
+		request.add_header('BotApi-Version', BOTAPI_VERSION)
 		request.add_header('Token', data[0])
 		request.add_header('Send-to-offline', offline)
-
 
 		postdata=urllib.unquote(parmdictb)
 		request.add_data(postdata)
@@ -71,73 +86,26 @@ class PushConnection:
 		return 0
 
 
-	def __pushSingle(self, message, image):
-		'''Wysyła wiadomość do BotMastera.'''
-		parmdictb=urllib.urlencode({'to': ','.join(map(str, message.recipientNumbers)), 'msg': urllib.quote(message.getProtocolMessage(image))})
-		if message.sendToOffline:
-			offline='1'
-		else:
-			offline='0'
-
-		return self.__push(parmdictb, offline, image)
-
-
-	def __pushMulti(self, message, offline):
-		'''Wysyła wiele wiadomości do BotMastera.'''
-		parmdictb=urllib.urlencode('&'.join(map(str, messagesMultiOffline)))
-		return self.__push(parmdictb, offline, True)
-
-
-	def push(self, message):
+	def push(self, messages):
 		'''Wysyła listę wiadomości do BotMastera.'''
+
 		if self.authorization.isAuthorized()==False:
 			return 0
 
 
 		count=0
 
-		if isinstance(message, list):
-			i=0
-			messages=[]
-			messagesMulti=[]
-			messagesMultiOffline=[]
-
-			for m in message:
-				if m.img is not None:
-					s=('to%d' % i)+'='+','.join(map(str, m.recipientNumbers))+('&msg%d' % i)+'='+urllib.urlencode(urllib.quote(m.getProtocolMessage()))
-					if m.sendToOffline:
-						messagesMultiOffline.append(s)
-
-					else:
-						messagesMulti.append(s)
-
-					i+=1
-
-				else:
-					messages.append(m)
-
-
-			if len(messagesMulti)>0:
-				count+=self.__pushMulti(messagesMulti, '1')
-
-			if len(messagesMultiOffline)>0:
-				count+=self.__pushMulti(messagesMulti, '0')
-
-		else:
-			messages=[message]
-
+		if isinstance(message, list)==False:
+			messages=[messages]
 
 		for message in messages:
-			try:
-				count+=self.__pushSingle(message, False)
+			parmdictb=urllib.urlencode({'to': ','.join(map(str, message.recipientNumbers)), 'msg': urllib.quote(message.getProtocolMessage())})
+			if message.sendToOffline:
+				offline='1'
+			else:
+				offline='0'
 
-
-			except urllib2.HTTPError, err:
-				if err.code==404:
-					count+=self.__pushSingle(message, True)
-
-				else:
-					raise
+			count+=self.__push(parmdictb, offline)
 
 		return count
 
@@ -148,9 +116,14 @@ class PushConnection:
 		statusDescription treść opisu
 		status typ opisu
 		graphic flaga czy jest to opis graficzny'''
+		if self.authorization.isAuthorized()==False:
+			return 0
+
+
 		try:
 			data=self.authorization.getServerAndToken()
 			request=urllib2.Request(PushConnection.URL_STATUS % (data[1], self.gg))
+			request.add_header('BotApi-Version', BOTAPI_VERSION)
 			request.add_header('Token', data[0])
 
 
@@ -186,13 +159,71 @@ class PushConnection:
 
 
 	def getUserbars(self):
-		'''Pobiera listę kupionych opisów graficznych'''
-		data=self.authorization.getServerAndToken()
-		request=urllib2.Request(PushConnection.URL_USERBARS % self.gg)
-		request.add_header('Token', data[0])
-		request.add_header('Accept', 'application/json')
+		return ''
 
-		return json.load(urllib2.urlopen(request))
+
+	def __image(self, type, dataName, post):
+		try:
+			data=self.authorization.getServerAndToken()
+
+			request=urllib2.Request(PushConnection.URL_IMG % (type, self.gg))
+			request.add_header('BotApi-Version', BOTAPI_VERSION)
+			request.add_header('Token', data[0])
+
+			if dataName == 'data':
+				request.add_data(post)
+			else:
+				parmdictb=urllib.urlencode({dataName: urllib.quote(post)})
+				postdata=urllib.unquote(parmdictb)
+				request.add_data(postdata)
+
+			file=urllib2.urlopen(request)
+			xmlData=file.read()
+
+			return xmlData;
+
+		except urllib2.HTTPError, err:
+			return False
+
+
+	def putImage(self, data):
+		if re.search(r'<status>0<\/status>', self.__image('put', 'data', data)) is not None:
+			return 1
+		return 0
+
+
+	def getImage(self, hash):
+		''' więcej logiki dla danych raw obrazka '''
+		return self.__image('get', 'hash', hash)
+
+
+	def existsImage(self, hash):
+		if re.search(r'<status>0<\/status>', self.__image('exists', 'hash', hash)) is not None:
+			return True
+		return False
+
+
+	def isBot(self, ggid):
+		try:
+			data=self.authorization.getServerAndToken()
+
+			request=urllib2.Request(PushConnection.URL_ISBOT % (self.gg))
+			request.add_header('BotApi-Version', BOTAPI_VERSION)
+			request.add_header('Token', data[0])
+
+			parmdictb=urllib.urlencode({'check_ggid': ggid})
+			postdata=urllib.unquote(parmdictb)
+			request.add_data(postdata)
+
+			file=urllib2.urlopen(request)
+			xmlData=file.read()
+
+			if re.search(r'<status>0<\/status>', xmlData) is not None:
+				return False
+			return True
+
+		except urllib2.HTTPError, err:
+			return False
 
 
 
@@ -214,6 +245,7 @@ class BotAPIAuthorization:
 	def getData(self, ggid, userName, password):
 		request=urllib2.Request(BotAPIAuthorization.URL_AUTH % ggid)
 		base64string=base64.encodestring('%s:%s' % (userName, password)).replace("\n", "")
+		request.add_header('BotApi-Version', BOTAPI_VERSION)
 		request.add_header("Authorization", "Basic %s" % base64string)
 
 		file=urllib2.urlopen(request)
@@ -236,8 +268,3 @@ class BotAPIAuthorization:
 	def getServerAndToken(self):
 		'''Pobiera aktywny token, port i adres BotMastera'''
 		return self.data
-
-
-	def getToken(self):
-		'''Pobiera aktywny token'''
-		return self.data[0]
