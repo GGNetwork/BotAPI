@@ -182,7 +182,7 @@ class MessageBuilder
     public function getProtocolMessage()
     {
 	$formatLen = strlen($this->format ?? '');
-    
+
         return pack('VVVV',
                     strlen($this->html)+1,
                     strlen($this->text)+1,
